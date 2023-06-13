@@ -30,7 +30,8 @@ def concat_batches(dist):
 class Distances:
     def __init__(self,
                  data_path: str = 'data_processed',
-                 nrows: int = None
+                 nrows: int = None,
+                 data=None
                  ):
         """
         Initialize Distances class with the data
@@ -38,14 +39,45 @@ class Distances:
         :param data_path: name of file
         :param nrows: number of rows to read
         """
-        self.data = pd.read_csv(DATASETS_PATH + data_path + '.csv', nrows=nrows).drop(columns=['Unnamed: 0'])
-        self.data['datetime'] = pd.to_datetime(self.data['datetime'])
+        if data is None:
+            self.data = pd.read_csv(DATASETS_PATH + data_path + '.csv', nrows=nrows).drop(columns=['Unnamed: 0'])
+            self.data['datetime'] = pd.to_datetime(self.data['datetime'])
+        else:
+            self.data = data
+            self.data['datetime'] = pd.to_datetime(self.data['datetime'])
         self.nrows = nrows
+
+    def get_prices(self, field='product_id'):
+        return dict(self.data[[field, 'line_item_price']].groupby(by=field).apply(lambda prices: prices.mean())['line_item_price'])
 
     @staticmethod
     def save_dists(file, path):
         with open(DATASETS_PATH + path + '.pkl', 'wb') as f:
             pickle.dump(file, f)
+
+    def get_helping(self, field):
+        freq = dict()
+
+        def fill_freq(x):
+            nonlocal freq
+            sum_of_receipt = (x['line_item_price'] * x['line_quantity']).sum()
+
+            for ind, val in enumerate(x[field].values):
+                if not np.isnan(val):
+                    if val in freq:
+                        freq[val][0] += 1
+                        freq[val][1].append(x['line_item_price'].values[ind] * x['line_quantity'].values[ind] / sum_of_receipt)
+                    else:
+                        freq[val] = [1, [x['line_item_price'].values[ind] * x['line_quantity'].values[ind] / sum_of_receipt]]
+
+        self.data.groupby(by='transaction_key').apply(fill_freq)
+        all = self.data['transaction_key'].drop_duplicates().shape[0]
+
+        for k in freq.keys():
+            freq[k][0] /= all
+            freq[k][1] = np.median(freq[k][1])
+
+        return freq
 
     def top_users(self, top_lim, field='product_id'):
         data = self.data[['gid', field]]

@@ -1,35 +1,15 @@
+import pickle
+from datetime import datetime
+from tqdm.notebook import tqdm
+from helper import *
+
 FIGURES_PATH = 'out/figures/'
 DATASETS_PATH = 'out/datasets/'
 CLUSTERS_PATH = 'out/clusters/'
 
-import pandas as pd
-from datetime import datetime, timedelta
-import os
-import multiprocessing
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import random
-from tqdm.notebook import tqdm
-from sortedcontainers import SortedDict, SortedSet, SortedList
-from multiprocesspandas import applyparallel
-from pandarallel import pandarallel
-import psutil
-from sys import getsizeof
-import networkx as nx
-from scipy.cluster.hierarchy import linkage, fcluster
-
-from netgraph import Graph, InteractiveGraph, EditableGraph
-
-import pickle
-import gc
-
-tqdm.pandas()
-from helper import *
-
 
 def default(mean, count, scatter):
-    return (mean + abs(scatter)) / (count ** 2)
+    return (mean + abs(scatter)) / count
 
 
 def normalize(d, target=1.0, type1=np.uint32, type2=np.float16):
@@ -47,7 +27,6 @@ def get_dists(dists, count_lower=10, dist_func=default):
     return normalize(ans)
 
 
-# %%
 class Metric:
     def __init__(self, method='euclidean', max=100):
         self.method = method
@@ -168,32 +147,32 @@ class ClustersDict:
         return self.dists[item[1], item[0]]
 
 
-class ClustersList:
-    def __init__(self, fill=np.inf):
-        self.dists = SortedList()
-        self.fill = fill
-
-    def insert(self, i, j, val):
-        el = Elem(i, j, np.float16(val))
-        self.dists.add(el)
-
-    def remove(self, i, j):
-        check = Elem(i, j, 0)
-        for ind, el in enumerate(self.dists):
-            if check == el:
-                del self.dists[ind]
-
-    def __getitem__(self, ij):
-        i, j = ij
-        for el in self.dists:
-            i1, j1 = el.get_key()
-            if i1 == i and j1 == j:
-                return el.val
-
-        return 100
-
-    def min(self):
-        return self.dists.pop().get_all()
+# class ClustersList:
+#     def __init__(self, fill=np.inf):
+#         self.dists = SortedList()
+#         self.fill = fill
+#
+#     def insert(self, i, j, val):
+#         el = Elem(i, j, np.float16(val))
+#         self.dists.add(el)
+#
+#     def remove(self, i, j):
+#         check = Elem(i, j, 0)
+#         for ind, el in enumerate(self.dists):
+#             if check == el:
+#                 del self.dists[ind]
+#
+#     def __getitem__(self, ij):
+#         i, j = ij
+#         for el in self.dists:
+#             i1, j1 = el.get_key()
+#             if i1 == i and j1 == j:
+#                 return el.val
+#
+#         return 100
+#
+#     def min(self):
+#         return self.dists.pop().get_all()
 
 
 class Clustering:
@@ -218,7 +197,7 @@ class Clustering:
         elements = np.unique(list(dists.keys()))
         elements.sort()
         for i, el in enumerate(elements):
-            subs[el] = i
+            subs[i] = el
 
         arr = np.full((len(elements), len(elements)), maxi)
         for i1, e1 in enumerate(elements):
@@ -281,14 +260,46 @@ class Clustering:
 
         return self.metric.run(clusters[u], clusters[v], dists)
 
+    def run_centroid(self, dists, method, k, top_lim, max_iter=1_000):
+        dists_matrix, subs = self._get_matrix_from_dict(dists)
+        start0 = datetime.now()
+        centroids = dists_matrix[np.random.choice(range(len(dists_matrix)), k, replace=False)]
+        labels = []
+        iters = 0
+
+        for _ in tqdm(range(max_iter)):
+            iters += 1
+            start = datetime.now()
+            distances = np.sqrt(((dists_matrix - centroids[:, np.newaxis]) ** 2).sum(axis=2))
+            labels = np.argmin(distances, axis=0)
+            min_distance = distances[labels]
+
+            new_centroids = np.array([dists_matrix[labels == i].mean(axis=0) for i in range(k)])
+            if np.all(centroids == new_centroids):
+                self.statistics['min_distances'].append(min_distance)
+                self.statistics['time_of_iter'].append(datetime.now() - start)
+                break
+            centroids = new_centroids
+
+            self.statistics['min_distances'].append(min_distance)
+            self.statistics['time_of_iter'].append(datetime.now() - start)
+        self.statistics['count_of_iters'] = iters
+        self.statistics['time_of_all'] = datetime.now() - start0
+
+        clusters = [[] for i in range(max(labels) + 1)]
+        for i, a in enumerate(labels):
+            clusters[a].append(subs[i])
+
+        clusters = [c for c in clusters if len(c) > 1]
+
+        return clusters
+
     def run_agglomerative(self, dists, method, k, top_lim):
         start0 = datetime.now()
 
         elements = np.unique(list(dists.keys()))
         clusters = [[i] for i in elements]
         iters = len(elements) - k
-
-        # clusters_dists = ClustersList()
 
         clusters_dists = ClustersDict()
         print('Starting counting distances between clusters...')
@@ -321,98 +332,14 @@ class Clustering:
         self.statistics['count_of_iters'] = iters
         self.statistics['time_of_all'] = datetime.now() - start0
 
-        clusters = [c for c in clusters if c != []]
+        clusters = [c for c in clusters if len(c) > 1]
 
         with open(CLUSTERS_PATH + f'{method}_{top_lim}_{k}.pkl', 'wb') as f:
             pickle.dump(clusters, f)
         return clusters
 
-    def run_k_means(self, dists, k, max_iter=10_000):
-        # Можно наканпливать minimal_dist, как внутрикластерное расстояние (в агломеративных тоже)
-        # Можно сохранять среднее расстояние между кластерами и внутри кластеров, чтобы показывать на графике
-
-        subs = dict()
-        if type(dists) == dict:
-            dists, subs = self._get_matrix_from_dict(dists, 100)
-
-        start0 = datetime.now()
-        centroids = dists[np.random.choice(range(dists.shape[0]), size=k, replace=False)]
-
-        for _ in tqdm(range(max_iter)):
-            start = datetime.now()
-            distances = np.linalg.norm(dists[:, np.newaxis] - centroids, axis=2)
-            labels = np.argmin(distances, axis=1)
-
-            new_centroids = np.array([dists[labels == k].mean(axis=0) for k in range(K)])
-
-            self.statistics['time_of_iter'].append(datetime.now() - start)
-            if np.all(centroids == new_centroids):
-                break
-
-            centroids = new_centroids
-            self.statistics['count_of_iters'] += 1
-
-        clusters = [[] for _ in range(max(labels))]
-        for el, cl in enumerate(labels):
-            clusters[cl].append(subs[el])
-
-        self.statistics['time_of_all'] = datetime.now() - start0
-
-        return clusters
-
-
-        # start0 = datetime.now()
-        # elements = np.unique(sorted(list(dists.keys())))
-        #
-        # clusters = np.random.choice(elements, k, replace=False)
-        # elements = elements[~np.isin(elements, clusters)]
-        # clusters = [[c] for c in clusters]
-        #
-        # print('Starting elements splitting by clusters...')
-        # for e in tqdm(elements):
-        #     minimal_dist = self.metric.max * 5.0
-        #     cluster_index = 0
-        #     for i, c in enumerate(clusters):
-        #         dist = self.metric.run([e], c, dists)
-        #         if dist < minimal_dist:
-        #             minimal_dist = dist
-        #             cluster_index = i
-        #
-        #     clusters[cluster_index].append(e)
-        #
-        # print('Starting operating over clusters...')
-        # for _ in tqdm(range(max_iter)):
-        #     self.statistics['count_of_iters'] += 1
-        #     start = datetime.now()
-        #     prev_clusters = clusters.copy()
-        #     for c1 in clusters:
-        #         for pos_el, el in enumerate(c1):
-        #             minimal_dist = self.metric.max * 5.0
-        #             cluster_index = 0
-        #             for i, c in enumerate(clusters):
-        #                 dist = self.metric.run([el], c, dists)
-        #                 if dist < minimal_dist:
-        #                     minimal_dist = dist
-        #                     cluster_index = i
-        #
-        #             self.statistics['min_distances'].append(minimal_dist)
-        #
-        #             del c1[pos_el]
-        #             clusters[cluster_index].append(el)
-        #
-        #     if prev_clusters == clusters:
-        #         print('Clusters stabilizied!')
-        #         self.statistics['time_of_all'] = datetime.now() - start0
-        #         return clusters
-        #
-        #     self.statistics['time_of_iter'].append(datetime.now() - start)
-        #
-        # print('Stopped for maximum iterations: {}'.format(max_iter))
-        # self.statistics['time_of_all'] = datetime.now() - start0
-        # return clusters
-
     def fit(self,
-            metric: str,
+            metric: str = 'euclidean',
             method: str = 'min_dist',
             type: str = 'agglomerative',
             dists_path: str = 'date_distances',
@@ -439,13 +366,6 @@ class Clustering:
         dists = self.get_dists(dists)
         self.metric = Metric(method=metric)
 
-        if type == 'agglomerative':
-            return self.run_agglomerative(dists, method, k, top_lim)
-        else:
-            return self.run_k_means(dists, k, max_iter)
-
-# c = Clustering()
-# clusters_euc = c.fit(metric='euclidean', method='min_dist', type='agglomerative', k=1_00, top_lim=1_000)
-#
-# with open(CLUSTERS_PATH + 'ward_min_dist.pkl', 'wb') as f:
-#     pickle.dump(clusters_euc, f)
+        if method not in ['min_dist', 'max_dist', 'average', 'weighted', 'ward', 'ward1']:
+            return self.run_centroid(dists, method, k, top_lim), dists
+        return self.run_agglomerative(dists, method, k, top_lim), dists
