@@ -82,11 +82,13 @@ class Distances:
     def top_users(self, top_lim, field='product_id'):
         data = self.data[['gid', field]]
         d = data.groupby(by='gid').apply(lambda x: len(x)).sort_values(ascending=False)
+        self.data = self.data.loc[self.data['gid'].isin(d.index.values[:top_lim])]
         return data.loc[data['gid'].isin(d.index.values[:top_lim])]
 
     def top_products(self, top_lim, field='product_id'):
         data = self.data[[field, 'datetime', 'gid']]
         d = data.groupby(by=field).apply(lambda x: len(x)).sort_values(ascending=False)
+        self.data = self.data.loc[self.data[field].isin(d.index.values[:top_lim])]
         return data.loc[data[field].isin(d.index.values[:top_lim])]
 
     def get_up(self,
@@ -113,7 +115,7 @@ class Distances:
         data = self.top_users(top_lim, field)
         print(len(data['gid'].drop_duplicates()))
 
-        pandarallel.initialize(progress_bar=True, use_memory_fs=True, nb_workers=psutil.cpu_count(logical=False))
+        pandarallel.initialize(progress_bar=True, use_memory_fs=False, nb_workers=psutil.cpu_count(logical=False))
         ans = data.groupby(by='gid').parallel_apply(process_batch)
 
         ans = dict(ans)
@@ -188,7 +190,7 @@ class Distances:
         else:
             batches = np.array_split(data, data.shape[0] // batch_size + 1)
 
-        pandarallel.initialize(progress_bar=False, use_memory_fs=True, nb_workers=psutil.cpu_count(logical=False))
+        pandarallel.initialize(progress_bar=False, use_memory_fs=False, nb_workers=psutil.cpu_count(logical=False))
 
         for batch in tqdm(batches):
             if psutil.virtual_memory().percent >= 90:

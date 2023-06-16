@@ -272,16 +272,13 @@ class Clustering:
             start = datetime.now()
             distances = np.sqrt(((dists_matrix - centroids[:, np.newaxis]) ** 2).sum(axis=2))
             labels = np.argmin(distances, axis=0)
-            min_distance = distances[labels]
 
             new_centroids = np.array([dists_matrix[labels == i].mean(axis=0) for i in range(k)])
             if np.all(centroids == new_centroids):
-                self.statistics['min_distances'].append(min_distance)
                 self.statistics['time_of_iter'].append(datetime.now() - start)
                 break
             centroids = new_centroids
 
-            self.statistics['min_distances'].append(min_distance)
             self.statistics['time_of_iter'].append(datetime.now() - start)
         self.statistics['count_of_iters'] = iters
         self.statistics['time_of_all'] = datetime.now() - start0
@@ -295,6 +292,8 @@ class Clustering:
         return clusters
 
     def run_agglomerative(self, dists, method, k, top_lim):
+        # print(top_lim)
+        # print(k)
         start0 = datetime.now()
 
         elements = np.unique(list(dists.keys()))
@@ -341,9 +340,8 @@ class Clustering:
     def fit(self,
             metric: str = 'euclidean',
             method: str = 'min_dist',
-            type: str = 'agglomerative',
             dists_path: str = 'date_distances',
-            k: int = 10,
+            k: int = 1000,
             top_lim: int = 10_000,
             max_iter: int = 10_000,
             dists=None
@@ -352,7 +350,6 @@ class Clustering:
 
         :param metric: euclidean, min_dist, max_dist, average
         :param method: min_dist, max_dist, average, weighted, ward. If specified min_dist, max_dist, average, then overwrites metric
-        :param type: agglomerative, centroid. If centroid, then operates over matrix of distances, like in observation
         :param dists_path: from where to take the distances
         :param k: if agglomerative, then while to stop
         :param top_lim: cutting elements to optimize time and memory
@@ -366,6 +363,6 @@ class Clustering:
         dists = self.get_dists(dists)
         self.metric = Metric(method=metric)
 
-        if method not in ['min_dist', 'max_dist', 'average', 'weighted', 'ward', 'ward1']:
+        if method not in ['min_dist', 'max_dist', 'average', 'weighted', 'ward']:
             return self.run_centroid(dists, method, k, top_lim), dists
         return self.run_agglomerative(dists, method, k, top_lim), dists
