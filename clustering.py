@@ -147,34 +147,6 @@ class ClustersDict:
         return self.dists[item[1], item[0]]
 
 
-# class ClustersList:
-#     def __init__(self, fill=np.inf):
-#         self.dists = SortedList()
-#         self.fill = fill
-#
-#     def insert(self, i, j, val):
-#         el = Elem(i, j, np.float16(val))
-#         self.dists.add(el)
-#
-#     def remove(self, i, j):
-#         check = Elem(i, j, 0)
-#         for ind, el in enumerate(self.dists):
-#             if check == el:
-#                 del self.dists[ind]
-#
-#     def __getitem__(self, ij):
-#         i, j = ij
-#         for el in self.dists:
-#             i1, j1 = el.get_key()
-#             if i1 == i and j1 == j:
-#                 return el.val
-#
-#         return 100
-#
-#     def min(self):
-#         return self.dists.pop().get_all()
-
-
 class Clustering:
     def __init__(self, get_dists=get_dists):
         self.metric = None
@@ -289,11 +261,12 @@ class Clustering:
 
         clusters = [c for c in clusters if len(c) > 1]
 
+        with open(CLUSTERS_PATH + f'{method}_{top_lim}_{k}.pkl', 'wb') as f:
+            pickle.dump(clusters, f)
+
         return clusters
 
     def run_agglomerative(self, dists, method, k, top_lim):
-        # print(top_lim)
-        # print(k)
         start0 = datetime.now()
 
         elements = np.unique(list(dists.keys()))

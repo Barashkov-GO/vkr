@@ -1,6 +1,3 @@
-FIGURES_PATH = 'out/figures/'
-DATASETS_PATH = 'out/datasets/'
-
 import pickle
 from datetime import timedelta
 
@@ -9,8 +6,11 @@ from pandarallel import pandarallel
 from tqdm.notebook import tqdm
 import multiprocessing
 
-tqdm.pandas()
 from helper import *
+
+FIGURES_PATH = 'out/figures/'
+DATASETS_PATH = 'out/datasets/'
+
 
 trans_dists = dict()
 
@@ -48,7 +48,8 @@ class Distances:
         self.nrows = nrows
 
     def get_prices(self, field='product_id'):
-        return dict(self.data[[field, 'line_item_price']].groupby(by=field).apply(lambda prices: prices.mean())['line_item_price'])
+        return dict(self.data[[field, 'line_item_price']].groupby(by=field).apply(lambda prices: prices.mean())[
+                        'line_item_price'])
 
     @staticmethod
     def save_dists(file, path):
@@ -66,9 +67,11 @@ class Distances:
                 if not np.isnan(val):
                     if val in freq:
                         freq[val][0] += 1
-                        freq[val][1].append(x['line_item_price'].values[ind] * x['line_quantity'].values[ind] / sum_of_receipt)
+                        freq[val][1].append(
+                            x['line_item_price'].values[ind] * x['line_quantity'].values[ind] / sum_of_receipt)
                     else:
-                        freq[val] = [1, [x['line_item_price'].values[ind] * x['line_quantity'].values[ind] / sum_of_receipt]]
+                        freq[val] = [1, [
+                            x['line_item_price'].values[ind] * x['line_quantity'].values[ind] / sum_of_receipt]]
 
         self.data.groupby(by='transaction_key').apply(fill_freq)
         all = self.data['transaction_key'].drop_duplicates().shape[0]
