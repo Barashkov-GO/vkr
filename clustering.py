@@ -24,7 +24,7 @@ def get_dists(dists, count_lower=10, dist_func=default):
         dist = dist_func(i[1][0], i[1][1], i[1][2])
         if (i[1][1] >= count_lower or dist != 0) and (dist >= 0):
             ans[i[0]] = dist
-    return normalize(ans)
+    return ans
 
 
 class Metric:
